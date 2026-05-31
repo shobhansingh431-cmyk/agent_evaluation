@@ -49,7 +49,12 @@ def case_to_eval_kwargs(case: LLMTestCase) -> dict:
 def build_metrics():
     correctness_metric = GEval(
         name="Correctness",
-        criteria="Determine if the 'actual output' is correct based on the 'expected output'.",
+        criteria=(
+            "Grade semantic correctness from 0 to 1. "
+            "Give partial credit when the actual output is directionally correct, "
+            "even if it is less detailed than the expected output. "
+            "Do not require exact wording."
+        ),
         evaluation_params=[SingleTurnParams.ACTUAL_OUTPUT, SingleTurnParams.EXPECTED_OUTPUT],
         threshold=0.5,
         model=groq_judge,
@@ -143,6 +148,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run DeepEval metrics and write JSON payloads.")
     parser.add_argument("--output-dir", default="eval_outputs")
     parser.add_argument("--artifact-path", default="outputs/evaluation_results.json")
+    parser.add_argument("--print-json", action="store_true", help="Print DeepEval metrics JSON to stdout.")
     args = parser.parse_args()
 
     run_timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S_UTC")
@@ -163,6 +169,10 @@ def main():
     print(f"Saved DeepEval metrics JSON to: {metrics_path.resolve()}")
     print(f"Saved LangSmith payload JSON to: {payload_path.resolve()}")
     print(f"Saved GitHub artifact JSON to: {artifact_path.resolve()}")
+    if args.print_json:
+        print("DEEPEVAL_METRICS_JSON_START")
+        print(json.dumps(deepeval_metrics_json, indent=2))
+        print("DEEPEVAL_METRICS_JSON_END")
 
 
 if __name__ == "__main__":
