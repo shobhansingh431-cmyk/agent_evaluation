@@ -73,18 +73,35 @@ def main():
                 "deepeval_metric_success",
                 matching_item.get("metric_success", {}),
             ),
+            "deepeval_metric_latency": inputs.get(
+                "deepeval_metric_latency",
+                matching_item.get("metric_latency", {}),
+            ),
+            "deepeval_metric_usage": inputs.get(
+                "deepeval_metric_usage",
+                matching_item.get("metric_usage", {}),
+            ),
+            "deepeval_metric_estimated_cost": inputs.get(
+                "deepeval_metric_estimated_cost",
+                matching_item.get("metric_estimated_cost", {}),
+            ),
         }
 
     def feedback_from_deepeval_json(inputs: dict, outputs: dict, reference_outputs: dict) -> dict:
         metrics = inputs.get("deepeval_metrics", {})
         matching_item = find_matching_item(inputs, outputs["answer"])
         for metric_name, score in metrics.items():
+            usage = matching_item.get("metric_usage", {}).get(metric_name, {})
             print(
                 f"[LangSmith feedback] {inputs['question']} | {metric_name}={score} | "
+                f"latency={matching_item.get('metric_latency', {}).get(metric_name)}s | "
+                f"tokens={usage.get('total_tokens', 0)} | "
                 f"reason={matching_item['metric_reasons'].get(metric_name)}"
             )
-        return {
-            "results": [
+        feedback_results = []
+        for metric_name, score in metrics.items():
+            usage = matching_item.get("metric_usage", {}).get(metric_name, {})
+            feedback_results.append(
                 {
                     "key": f"deepeval_{metric_name}",
                     "score": score,
@@ -92,12 +109,40 @@ def main():
                     "metadata": {
                         "success": matching_item["metric_success"].get(metric_name),
                         "judge_model": matching_item.get("model"),
-                        "latency": matching_item.get("latency"),
+                        "latency": matching_item.get("metric_latency", {}).get(metric_name),
+                        "usage": usage,
+                        "estimated_cost": matching_item.get("metric_estimated_cost", {}).get(metric_name),
                         "source": "deepeval_metrics_json",
                     },
                 }
-                for metric_name, score in metrics.items()
-            ]
+            )
+            feedback_results.append(
+                {
+                    "key": f"deepeval_{metric_name}_latency",
+                    "score": matching_item.get("metric_latency", {}).get(metric_name),
+                    "comment": f"DeepEval latency in seconds for {metric_name}",
+                }
+            )
+            feedback_results.append(
+                {
+                    "key": f"deepeval_{metric_name}_total_tokens",
+                    "score": usage.get("total_tokens", 0),
+                    "comment": f"Judge-model total tokens captured for {metric_name}",
+                }
+            )
+            if matching_item.get("metric_estimated_cost", {}).get(metric_name) is not None:
+                feedback_results.append(
+                    {
+                        "key": f"deepeval_{metric_name}_estimated_cost",
+                        "score": matching_item["metric_estimated_cost"][metric_name],
+                        "comment": (
+                            f"Estimated judge-model cost for {metric_name}. "
+                            "Set GROQ_INPUT_COST_PER_1M and GROQ_OUTPUT_COST_PER_1M to control pricing."
+                        ),
+                    }
+                )
+        return {
+            "results": feedback_results
         }
 
     experiment_results = client.evaluate(

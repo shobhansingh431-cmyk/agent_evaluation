@@ -42,6 +42,19 @@ def judge_model_name(metric):
     return str(getattr(metric, "evaluation_model", ""))
 
 
+def estimate_cost(usage: dict) -> float | None:
+    input_cost = os.getenv("GROQ_INPUT_COST_PER_1M")
+    output_cost = os.getenv("GROQ_OUTPUT_COST_PER_1M")
+    if not input_cost or not output_cost:
+        return None
+
+    return round(
+        (usage.get("input_tokens", 0) / 1_000_000 * float(input_cost))
+        + (usage.get("output_tokens", 0) / 1_000_000 * float(output_cost)),
+        8,
+    )
+
+
 def case_to_eval_kwargs(case: LLMTestCase) -> dict:
     expected_output = clean_text(case.expected_output)
     kwargs = {
@@ -135,6 +148,9 @@ def build_payload(metrics_json: list[dict], run_timestamp: str) -> dict:
                     "deepeval_metric_reasons": item["metric_reasons"],
                     "deepeval_metric_success": item["metric_success"],
                     "deepeval_metric_direction": item["metric_direction"],
+                    "deepeval_metric_latency": item["metric_latency"],
+                    "deepeval_metric_usage": item["metric_usage"],
+                    "deepeval_metric_estimated_cost": item["metric_estimated_cost"],
                 },
                 "outputs": {"expected_output": item.get("expected_output")},
                 "metadata": {
@@ -159,6 +175,9 @@ def build_payload(metrics_json: list[dict], run_timestamp: str) -> dict:
                             "judge_model": item.get("model"),
                             "latency": item.get("latency"),
                             "direction": metric_direction(metric_name),
+                            "metric_latency": item["metric_latency"].get(metric_name),
+                            "usage": item["metric_usage"].get(metric_name),
+                            "estimated_cost": item["metric_estimated_cost"].get(metric_name),
                         },
                     }
                     for metric_name, score in item["metrics"].items()
@@ -196,6 +215,9 @@ def run_evaluation(metric_suite: str) -> list[dict]:
             "metric_reasons": {},
             "metric_success": {},
             "metric_direction": {},
+            "metric_latency": {},
+            "metric_usage": {},
+            "metric_estimated_cost": {},
         }
 
         started_at = time.perf_counter()
@@ -207,30 +229,44 @@ def run_evaluation(metric_suite: str) -> list[dict]:
                 flush=True,
             )
             try:
+                if hasattr(groq_judge, "reset_usage"):
+                    groq_judge.reset_usage()
                 metric.measure(LLMTestCase(**eval_case_kwargs))
                 score = float(metric.score) if metric.score is not None else None
+                metric_latency = round(time.perf_counter() - metric_started_at, 3)
+                usage = groq_judge.usage_snapshot() if hasattr(groq_judge, "usage_snapshot") else {}
                 row[name] = score
                 row["metrics"][name] = score
                 row["metric_reasons"][name] = str(getattr(metric, "reason", ""))
                 row["metric_success"][name] = bool(getattr(metric, "success", False))
                 row["metric_direction"][name] = metric_direction(name)
+                row["metric_latency"][name] = metric_latency
+                row["metric_usage"][name] = usage
+                row["metric_estimated_cost"][name] = estimate_cost(usage)
                 row["model"] = row["model"] or judge_model_name(metric)
                 print(
                     f"  [metric {metric_index}/{len(metrics)}] finished {name}: "
                     f"score={score} success={row['metric_success'][name]} "
-                    f"duration={time.perf_counter() - metric_started_at:.2f}s",
+                    f"duration={metric_latency:.2f}s "
+                    f"tokens={usage.get('total_tokens', 0)}",
                     flush=True,
                 )
             except Exception as exc:
+                metric_latency = round(time.perf_counter() - metric_started_at, 3)
+                usage = groq_judge.usage_snapshot() if hasattr(groq_judge, "usage_snapshot") else {}
                 row[name] = None
                 row["metrics"][name] = None
                 row["metric_reasons"][name] = f"DeepEval failed: {exc}"
                 row["metric_success"][name] = False
                 row["metric_direction"][name] = metric_direction(name)
+                row["metric_latency"][name] = metric_latency
+                row["metric_usage"][name] = usage
+                row["metric_estimated_cost"][name] = estimate_cost(usage)
                 row["model"] = row["model"] or judge_model_name(metric)
                 print(
                     f"  [metric {metric_index}/{len(metrics)}] failed {name}: {exc} "
-                    f"duration={time.perf_counter() - metric_started_at:.2f}s",
+                    f"duration={metric_latency:.2f}s "
+                    f"tokens={usage.get('total_tokens', 0)}",
                     flush=True,
                 )
 
