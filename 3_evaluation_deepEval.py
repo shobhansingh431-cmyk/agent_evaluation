@@ -50,9 +50,14 @@ def build_metrics():
     correctness_metric = GEval(
         name="Correctness",
         criteria=(
-            "Grade semantic correctness from 0 to 1. "
-            "Give partial credit when the actual output is directionally correct, "
-            "even if it is less detailed than the expected output. "
+            "Grade semantic correctness from 0 to 1 using this rubric: "
+            "1.0 = fully correct and includes all important expected details. "
+            "0.8 = correct and includes most important expected details, with only minor omissions. "
+            "0.6 = directionally correct and captures the main idea, but misses several important details. "
+            "0.4 = partially related but vague, incomplete, or missing the main purpose. "
+            "0.2 = minimally related, mostly incomplete, or only contains a keyword match. "
+            "0.0 = incorrect, unsupported, or unrelated. "
+            "Use intermediate values like 0.7, 0.5, or 0.3 when the answer falls between bands. "
             "Do not require exact wording."
         ),
         evaluation_params=[SingleTurnParams.ACTUAL_OUTPUT, SingleTurnParams.EXPECTED_OUTPUT],
