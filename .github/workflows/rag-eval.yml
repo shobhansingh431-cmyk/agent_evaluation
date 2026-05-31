@@ -1,0 +1,42 @@
+name: RAG Evaluation
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+
+  evaluate:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Install UV
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install Dependencies
+        run: uv sync
+
+      - name: Run DeepEval
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_EVAL_MODEL: llama-3.1-8b-instant
+        run: uv run python 3_evaluation_deepEval.py
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rag-eval-results
+          path: |
+            outputs/evaluation_results.json
+            eval_outputs/*.json
+
+      - name: Push To LangSmith
+        env:
+          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+          LANGSMITH_ENDPOINT: https://api.smith.langchain.com
+          LANGSMITH_PROJECT: Agents Evaluation 1
+        run: uv run python 4_push_langmsmith.py

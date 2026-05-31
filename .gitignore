@@ -1,0 +1,17 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Evaluation artifacts
+eval_outputs/
+eval_outputs_test/
+outputs/
+outputs_test/
+.env
