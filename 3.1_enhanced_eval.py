@@ -78,8 +78,16 @@ def build_metrics(metric_suite: str):
     completeness = GEval(
         name="Completeness",
         criteria=(
-            "Grade from 0 to 1 how completely the actual output covers the important details "
-            "in the expected output. Penalize missing key concepts even if the answer is partly correct."
+            "Grade from 0 to 1 how completely the actual output covers the important semantic ideas "
+            "in the expected output. Do not penalize for missing exact words, synonyms, article usage, "
+            "or phrasing differences when the same meaning is present. Focus only on materially missing "
+            "concepts that change the answer's usefulness or accuracy. "
+            "1.0 = covers all important ideas. "
+            "0.8 = covers almost all important ideas with only minor omissions. "
+            "0.6 = covers the main idea but misses some useful supporting details. "
+            "0.4 = incomplete and misses important concepts. "
+            "0.2 = barely addresses the expected answer. "
+            "0.0 = unrelated or empty."
         ),
         evaluation_params=[SingleTurnParams.ACTUAL_OUTPUT, SingleTurnParams.EXPECTED_OUTPUT],
         threshold=0.7,
