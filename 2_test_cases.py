@@ -34,4 +34,26 @@ test_cases = [
         used to provision and manage cloud resources.
         """,
     ),
+    LLMTestCase(
+        input="What is LangSmith?",
+        actual_output="""
+        LangSmith is a platform for tracing, monitoring, debugging,
+        and evaluating LLM applications.
+        """,
+        expected_output="""
+        LangSmith is a platform used to trace, monitor, debug,
+        and evaluate LLM applications.
+        """,
+    ),
+    LLMTestCase(
+        input="What is Docker used for?",
+        actual_output="""
+        Docker is a platform used to build, package, and run
+        applications inside containers.
+        """,
+        expected_output="""
+        Docker is a platform used to build, package,
+        and run applications inside containers.
+        """,
+    ),
 ]
