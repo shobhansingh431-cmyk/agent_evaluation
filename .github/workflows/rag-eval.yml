@@ -27,7 +27,8 @@ jobs:
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GROQ_EVAL_MODEL: llama-3.1-8b-instant
-        run: uv run python 3_evaluation_deepEval.py --print-json
+        # run: uv run python 3_evaluation_deepEval.py --print-json
+        run: uv run python 3.1_enhanced_eval.py --print-json
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

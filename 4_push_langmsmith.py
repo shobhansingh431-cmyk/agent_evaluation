@@ -53,19 +53,36 @@ def main():
     )
     client.create_examples(dataset_id=dataset.id, examples=langsmith_payload["examples"])
 
+    def find_matching_item(inputs: dict, answer: str) -> dict:
+        return next(
+            item
+            for item in deepeval_metrics_json
+            if item["question"] == inputs["question"] and item["answer"] == answer
+        )
+
     def target(inputs: dict) -> dict:
+        matching_item = find_matching_item(inputs, inputs["actual_output"])
         return {
             "answer": inputs["actual_output"],
             "deepeval_metrics": inputs.get("deepeval_metrics", {}),
+            "deepeval_metric_reasons": inputs.get(
+                "deepeval_metric_reasons",
+                matching_item.get("metric_reasons", {}),
+            ),
+            "deepeval_metric_success": inputs.get(
+                "deepeval_metric_success",
+                matching_item.get("metric_success", {}),
+            ),
         }
 
     def feedback_from_deepeval_json(inputs: dict, outputs: dict, reference_outputs: dict) -> dict:
         metrics = inputs.get("deepeval_metrics", {})
-        matching_item = next(
-            item
-            for item in deepeval_metrics_json
-            if item["question"] == inputs["question"] and item["answer"] == outputs["answer"]
-        )
+        matching_item = find_matching_item(inputs, outputs["answer"])
+        for metric_name, score in metrics.items():
+            print(
+                f"[LangSmith feedback] {inputs['question']} | {metric_name}={score} | "
+                f"reason={matching_item['metric_reasons'].get(metric_name)}"
+            )
         return {
             "results": [
                 {

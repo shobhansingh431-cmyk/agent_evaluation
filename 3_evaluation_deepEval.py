@@ -76,6 +76,8 @@ def build_payload(deepeval_metrics_json: list[dict], run_timestamp: str) -> dict
                     "question": item["question"],
                     "actual_output": item["answer"],
                     "deepeval_metrics": item["metrics"],
+                    "deepeval_metric_reasons": item["metric_reasons"],
+                    "deepeval_metric_success": item["metric_success"],
                 },
                 "outputs": {"expected_output": item.get("expected_output")},
                 "metadata": {
