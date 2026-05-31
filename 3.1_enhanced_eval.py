@@ -56,7 +56,7 @@ def case_to_eval_kwargs(case: LLMTestCase) -> dict:
     return {key: value for key, value in kwargs.items() if value is not None}
 
 
-def build_metrics():
+def build_metrics(metric_suite: str):
     correctness = GEval(
         name="Correctness",
         criteria=(
@@ -93,16 +93,21 @@ def build_metrics():
     toxicity = ToxicityMetric(threshold=0.5, model=groq_judge, async_mode=False)
     exact_match = ExactMatchMetric(threshold=1.0)
 
-    return [
-        correctness,
-        completeness,
-        answer_relevancy,
-        faithfulness,
-        hallucination,
-        bias,
-        toxicity,
-        exact_match,
-    ]
+    suites = {
+        "core": [correctness, completeness, answer_relevancy, exact_match],
+        "safety": [hallucination, bias, toxicity],
+        "all": [
+            correctness,
+            completeness,
+            answer_relevancy,
+            faithfulness,
+            hallucination,
+            bias,
+            toxicity,
+            exact_match,
+        ],
+    }
+    return suites[metric_suite]
 
 
 def metric_direction(metric_name: str) -> str:
@@ -156,12 +161,22 @@ def build_payload(metrics_json: list[dict], run_timestamp: str) -> dict:
     }
 
 
-def run_evaluation() -> list[dict]:
-    metrics = build_metrics()
+def run_evaluation(metric_suite: str) -> list[dict]:
+    metrics = build_metrics(metric_suite)
     enhanced_metrics_json = []
 
-    for case in test_cases:
+    print(
+        f"Starting enhanced DeepEval run: {len(test_cases)} test cases, "
+        f"{len(metrics)} metrics, suite={metric_suite}",
+        flush=True,
+    )
+
+    for case_index, case in enumerate(test_cases, start=1):
         eval_case_kwargs = case_to_eval_kwargs(case)
+        print(
+            f"[case {case_index}/{len(test_cases)}] {eval_case_kwargs['input']}",
+            flush=True,
+        )
         row = {
             "question": eval_case_kwargs["input"],
             "answer": eval_case_kwargs["actual_output"],
@@ -176,8 +191,13 @@ def run_evaluation() -> list[dict]:
         }
 
         started_at = time.perf_counter()
-        for metric in metrics:
+        for metric_index, metric in enumerate(metrics, start=1):
             name = metric_key(metric)
+            metric_started_at = time.perf_counter()
+            print(
+                f"  [metric {metric_index}/{len(metrics)}] starting {name}",
+                flush=True,
+            )
             try:
                 metric.measure(LLMTestCase(**eval_case_kwargs))
                 score = float(metric.score) if metric.score is not None else None
@@ -187,6 +207,12 @@ def run_evaluation() -> list[dict]:
                 row["metric_success"][name] = bool(getattr(metric, "success", False))
                 row["metric_direction"][name] = metric_direction(name)
                 row["model"] = row["model"] or judge_model_name(metric)
+                print(
+                    f"  [metric {metric_index}/{len(metrics)}] finished {name}: "
+                    f"score={score} success={row['metric_success'][name]} "
+                    f"duration={time.perf_counter() - metric_started_at:.2f}s",
+                    flush=True,
+                )
             except Exception as exc:
                 row[name] = None
                 row["metrics"][name] = None
@@ -194,9 +220,18 @@ def run_evaluation() -> list[dict]:
                 row["metric_success"][name] = False
                 row["metric_direction"][name] = metric_direction(name)
                 row["model"] = row["model"] or judge_model_name(metric)
+                print(
+                    f"  [metric {metric_index}/{len(metrics)}] failed {name}: {exc} "
+                    f"duration={time.perf_counter() - metric_started_at:.2f}s",
+                    flush=True,
+                )
 
         row["latency"] = round(time.perf_counter() - started_at, 3)
         enhanced_metrics_json.append(row)
+        print(
+            f"[case {case_index}/{len(test_cases)}] finished in {row['latency']}s",
+            flush=True,
+        )
 
     return enhanced_metrics_json
 
@@ -206,6 +241,12 @@ def main():
     parser.add_argument("--output-dir", default="eval_outputs")
     parser.add_argument("--artifact-path", default="outputs/enhanced_evaluation_results.json")
     parser.add_argument("--print-json", action="store_true", help="Print enhanced DeepEval metrics JSON to stdout.")
+    parser.add_argument(
+        "--metric-suite",
+        choices=["core", "safety", "all"],
+        default="all",
+        help="Metric group to run. Use core for faster CI, all for the full enhanced run.",
+    )
     args = parser.parse_args()
 
     run_timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S_UTC")
@@ -214,17 +255,23 @@ def main():
     artifact_path = Path(args.artifact_path)
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
 
-    enhanced_metrics_json = run_evaluation()
+    enhanced_metrics_json = run_evaluation(args.metric_suite)
     langsmith_payload = build_payload(enhanced_metrics_json, run_timestamp)
 
     metrics_path = output_dir / f"enhanced_deepeval_metrics_{run_timestamp}.json"
     payload_path = output_dir / f"enhanced_langsmith_payload_{run_timestamp}.json"
+    generic_metrics_path = output_dir / f"deepeval_metrics_{run_timestamp}.json"
+    generic_payload_path = output_dir / f"langsmith_payload_{run_timestamp}.json"
     metrics_path.write_text(json.dumps(enhanced_metrics_json, indent=2), encoding="utf-8")
     payload_path.write_text(json.dumps(langsmith_payload, indent=2), encoding="utf-8")
+    generic_metrics_path.write_text(json.dumps(enhanced_metrics_json, indent=2), encoding="utf-8")
+    generic_payload_path.write_text(json.dumps(langsmith_payload, indent=2), encoding="utf-8")
     artifact_path.write_text(json.dumps(enhanced_metrics_json, indent=2), encoding="utf-8")
 
     print(f"Saved enhanced DeepEval metrics JSON to: {metrics_path.resolve()}")
     print(f"Saved enhanced LangSmith payload JSON to: {payload_path.resolve()}")
+    print(f"Saved generic DeepEval metrics JSON to: {generic_metrics_path.resolve()}")
+    print(f"Saved generic LangSmith payload JSON to: {generic_payload_path.resolve()}")
     print(f"Saved enhanced artifact JSON to: {artifact_path.resolve()}")
     if args.print_json:
         print("ENHANCED_DEEPEVAL_METRICS_JSON_START")

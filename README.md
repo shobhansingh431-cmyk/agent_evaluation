@@ -125,6 +125,40 @@ Return additional DeepEval metrics from that list. They will automatically appea
 - `langsmith_payload_*.json`
 - LangSmith feedback columns
 
+## Enhanced Metric Suites
+
+`3.1_enhanced_eval.py` supports metric suites so CI can run a faster subset or the full enhanced set.
+
+Run the faster core suite:
+
+```bash
+uv run python 3.1_enhanced_eval.py --metric-suite core --print-json
+```
+
+Run all enhanced metrics:
+
+```bash
+uv run python 3.1_enhanced_eval.py --metric-suite all --print-json
+```
+
+Available suites:
+
+| Suite | Metrics | Notes |
+| --- | --- | --- |
+| `core` | `Correctness`, `Completeness`, `AnswerRelevancy`, `ExactMatch` | Recommended for CI. Faster and focused on answer quality. |
+| `safety` | `Hallucination`, `Bias`, `Toxicity` | Safety and risk checks. These are lower-is-better metrics. |
+| `all` | Everything in `core` plus `Faithfulness`, `Hallucination`, `Bias`, `Toxicity` | Full enhanced run. Slower because several metrics make extra judge-model calls. |
+
+Approximate Groq judge calls with the current 5 test cases:
+
+| Suite | Approximate Groq Calls |
+| --- | --- |
+| `core` | About 15-20 calls |
+| `safety` | About 15+ calls |
+| `all` | About 40+ calls |
+
+`ExactMatch` does not call the LLM. Most other DeepEval metrics call the Groq judge model at least once per test case, and some metrics may call it more than once internally.
+
 ## Notes
 
 - `3_evaluation_deepEval.py` disables LangSmith tracing during local DeepEval execution. Only `4_push_langmsmith.py` uploads to LangSmith.
