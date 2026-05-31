@@ -2,6 +2,7 @@ import argparse
 import importlib
 import json
 import os
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -53,6 +54,18 @@ def estimate_cost(usage: dict) -> float | None:
         + (usage.get("output_tokens", 0) / 1_000_000 * float(output_cost)),
         8,
     )
+
+
+def retry_sleep_seconds(error: Exception, attempt: int) -> float:
+    message = str(error)
+    match = re.search(r"try again in ([0-9.]+)s", message, flags=re.IGNORECASE)
+    if match:
+        return float(match.group(1)) + 1
+    if "rate_limit" in message.lower() or "429" in message:
+        return min(30, 2**attempt)
+    if "invalid json" in message.lower():
+        return min(10, 2**attempt)
+    return 0
 
 
 def case_to_eval_kwargs(case: LLMTestCase) -> dict:
@@ -188,7 +201,7 @@ def build_payload(metrics_json: list[dict], run_timestamp: str) -> dict:
     }
 
 
-def run_evaluation(metric_suite: str) -> list[dict]:
+def run_evaluation(metric_suite: str, max_retries: int, metric_delay: float) -> list[dict]:
     metrics = build_metrics(metric_suite)
     enhanced_metrics_json = []
 
@@ -228,47 +241,65 @@ def run_evaluation(metric_suite: str) -> list[dict]:
                 f"  [metric {metric_index}/{len(metrics)}] starting {name}",
                 flush=True,
             )
-            try:
-                if hasattr(groq_judge, "reset_usage"):
-                    groq_judge.reset_usage()
-                metric.measure(LLMTestCase(**eval_case_kwargs))
-                score = float(metric.score) if metric.score is not None else None
-                metric_latency = round(time.perf_counter() - metric_started_at, 3)
-                usage = groq_judge.usage_snapshot() if hasattr(groq_judge, "usage_snapshot") else {}
-                row[name] = score
-                row["metrics"][name] = score
-                row["metric_reasons"][name] = str(getattr(metric, "reason", ""))
-                row["metric_success"][name] = bool(getattr(metric, "success", False))
-                row["metric_direction"][name] = metric_direction(name)
-                row["metric_latency"][name] = metric_latency
-                row["metric_usage"][name] = usage
-                row["metric_estimated_cost"][name] = estimate_cost(usage)
-                row["model"] = row["model"] or judge_model_name(metric)
-                print(
-                    f"  [metric {metric_index}/{len(metrics)}] finished {name}: "
-                    f"score={score} success={row['metric_success'][name]} "
-                    f"duration={metric_latency:.2f}s "
-                    f"tokens={usage.get('total_tokens', 0)}",
-                    flush=True,
-                )
-            except Exception as exc:
-                metric_latency = round(time.perf_counter() - metric_started_at, 3)
-                usage = groq_judge.usage_snapshot() if hasattr(groq_judge, "usage_snapshot") else {}
-                row[name] = None
-                row["metrics"][name] = None
-                row["metric_reasons"][name] = f"DeepEval failed: {exc}"
-                row["metric_success"][name] = False
-                row["metric_direction"][name] = metric_direction(name)
-                row["metric_latency"][name] = metric_latency
-                row["metric_usage"][name] = usage
-                row["metric_estimated_cost"][name] = estimate_cost(usage)
-                row["model"] = row["model"] or judge_model_name(metric)
-                print(
-                    f"  [metric {metric_index}/{len(metrics)}] failed {name}: {exc} "
-                    f"duration={metric_latency:.2f}s "
-                    f"tokens={usage.get('total_tokens', 0)}",
-                    flush=True,
-                )
+            last_error = None
+            for attempt in range(max_retries + 1):
+                try:
+                    if hasattr(groq_judge, "reset_usage"):
+                        groq_judge.reset_usage()
+                    metric.measure(LLMTestCase(**eval_case_kwargs))
+                    score = float(metric.score) if metric.score is not None else None
+                    metric_latency = round(time.perf_counter() - metric_started_at, 3)
+                    usage = groq_judge.usage_snapshot() if hasattr(groq_judge, "usage_snapshot") else {}
+                    row[name] = score
+                    row["metrics"][name] = score
+                    row["metric_reasons"][name] = str(getattr(metric, "reason", ""))
+                    row["metric_success"][name] = bool(getattr(metric, "success", False))
+                    row["metric_direction"][name] = metric_direction(name)
+                    row["metric_latency"][name] = metric_latency
+                    row["metric_usage"][name] = usage
+                    row["metric_estimated_cost"][name] = estimate_cost(usage)
+                    row["model"] = row["model"] or judge_model_name(metric)
+                    print(
+                        f"  [metric {metric_index}/{len(metrics)}] finished {name}: "
+                        f"score={score} success={row['metric_success'][name]} "
+                        f"duration={metric_latency:.2f}s "
+                        f"tokens={usage.get('total_tokens', 0)}",
+                        flush=True,
+                    )
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    wait_seconds = retry_sleep_seconds(exc, attempt)
+                    if attempt < max_retries and wait_seconds > 0:
+                        print(
+                            f"  [metric {metric_index}/{len(metrics)}] retrying {name} after "
+                            f"{wait_seconds:.2f}s because: {exc}",
+                            flush=True,
+                        )
+                        time.sleep(wait_seconds)
+                        continue
+                    metric_latency = round(time.perf_counter() - metric_started_at, 3)
+                    usage = groq_judge.usage_snapshot() if hasattr(groq_judge, "usage_snapshot") else {}
+                    row[name] = None
+                    row["metrics"][name] = None
+                    row["metric_reasons"][name] = f"DeepEval failed: {last_error}"
+                    row["metric_success"][name] = False
+                    row["metric_direction"][name] = metric_direction(name)
+                    row["metric_latency"][name] = metric_latency
+                    row["metric_usage"][name] = usage
+                    row["metric_estimated_cost"][name] = estimate_cost(usage)
+                    row["model"] = row["model"] or judge_model_name(metric)
+                    print(
+                        f"  [metric {metric_index}/{len(metrics)}] failed {name}: {last_error} "
+                        f"duration={metric_latency:.2f}s "
+                        f"tokens={usage.get('total_tokens', 0)}",
+                        flush=True,
+                    )
+                    break
+
+            if metric_delay > 0 and metric_index < len(metrics):
+                print(f"  sleeping {metric_delay:.2f}s before next metric", flush=True)
+                time.sleep(metric_delay)
 
         row["latency"] = round(time.perf_counter() - started_at, 3)
         enhanced_metrics_json.append(row)
@@ -285,6 +316,8 @@ def main():
     parser.add_argument("--output-dir", default="eval_outputs")
     parser.add_argument("--artifact-path", default="outputs/enhanced_evaluation_results.json")
     parser.add_argument("--print-json", action="store_true", help="Print enhanced DeepEval metrics JSON to stdout.")
+    parser.add_argument("--max-retries", type=int, default=2, help="Retries for rate limits or invalid JSON responses.")
+    parser.add_argument("--metric-delay", type=float, default=1.0, help="Seconds to sleep between metric evaluations.")
     parser.add_argument(
         "--metric-suite",
         choices=["core", "safety", "all"],
@@ -299,7 +332,7 @@ def main():
     artifact_path = Path(args.artifact_path)
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
 
-    enhanced_metrics_json = run_evaluation(args.metric_suite)
+    enhanced_metrics_json = run_evaluation(args.metric_suite, args.max_retries, args.metric_delay)
     langsmith_payload = build_payload(enhanced_metrics_json, run_timestamp)
 
     metrics_path = output_dir / f"enhanced_deepeval_metrics_{run_timestamp}.json"

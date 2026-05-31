@@ -31,7 +31,7 @@ jobs:
           GROQ_INPUT_COST_PER_1M: ${{ vars.GROQ_INPUT_COST_PER_1M }}
           GROQ_OUTPUT_COST_PER_1M: ${{ vars.GROQ_OUTPUT_COST_PER_1M }}
         # run: uv run python 3_evaluation_deepEval.py --print-json
-        run: uv run python -u 3.1_enhanced_eval.py --metric-suite safety --print-json
+        run: uv run python -u 3.1_enhanced_eval.py --metric-suite safety --max-retries 2 --metric-delay 3 --print-json
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
